@@ -1,0 +1,12 @@
+# 缓存与本地状态（运行时生成，不入库）
+.zhipu-quota.json
+.zhipu-session.json
+.zhipu-statusline-config.json
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
