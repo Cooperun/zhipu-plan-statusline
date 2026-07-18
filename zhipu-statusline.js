@@ -5,9 +5,9 @@
  * 输出两行：
  *   第 1 行：转发你原来的状态栏（GSD 等），由安装器写入配置；没有就跳过。
  *   第 2 行：智谱套餐余量
- *           🤖 GLM(Pro) 5h:██░░░░░░░░ 3% · 7d:░░░░░░░░░░ 1% · 会话:2.1M
+ *           🤖 GLM(Pro) 5h:██░░░░░░░░ 9% (1h23m) · 7d:░░░░░░░░░░ 2% (5d8h) · 会话:2.1M
  *           老 Windows cmd.exe 自动降级为纯文本：
- *           GLM(Pro) 5h:[###-------]3% | 7d:[#---------]1% | sess:2.1M
+ *           GLM(Pro) 5h:[###-------]9% (1h23m) | 7d:[#---------]2% (5d8h) | sess:2.1M
  *
  * 鉴权：优先环境变量 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL，缺失回退 settings.json。token 绝不写盘/打印。
  * 性能：套餐用量 5 分钟缓存、会话 token 10 秒缓存；过期后台异步刷新，前台永不卡顿。
@@ -100,13 +100,13 @@ function fetchQuotaData() {
   });
 }
 function parseLimits(data) {
-  const out = { fivePct: null, weekPct: null, level: null };
+  const out = { fivePct: null, weekPct: null, fiveReset: null, weekReset: null, level: null };
   if (!data) return out;
   if (data.level) out.level = cap(String(data.level));
   const tokens = (Array.isArray(data.limits) ? data.limits : []).filter(l => l.type === 'TOKENS_LIMIT');
   tokens.sort((a, b) => (a.nextResetTime || 0) - (b.nextResetTime || 0)); // 重置更早=5h，更晚=7d
-  if (tokens[0]) out.fivePct = tokens[0].percentage;
-  if (tokens[1]) out.weekPct = tokens[1].percentage;
+  if (tokens[0]) { out.fivePct = tokens[0].percentage; out.fiveReset = tokens[0].nextResetTime; }
+  if (tokens[1]) { out.weekPct = tokens[1].percentage; out.weekReset = tokens[1].nextResetTime; }
   return out;
 }
 
@@ -152,6 +152,23 @@ function fmtTokens(n) {
 }
 function barRich(pct) { const f = Math.round(pct/100*BAR_WIDTH), c = colorFor(pct); return c + '█'.repeat(f) + '░'.repeat(BAR_WIDTH-f) + C.reset; }
 function barPlain(pct){ const f = Math.round(pct/100*BAR_WIDTH); return '[' + '#'.repeat(f) + '-'.repeat(BAR_WIDTH-f) + ']'; }
+// 剩余毫秒 → "1h23m" / "5d8h" / "12m" / "<1m"；<=0 返回 null（已重置，等下次刷新）
+function fmtDuration(ms) {
+  if (!(ms > 0)) return null;
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d${h}h`;
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m`;
+  return '<1m';
+}
+// 拼一个窗口段：标签 + 进度条 + 百分比 + (距重置倒计时)
+function win(label, pct, dur, rich) {
+  const bar = rich ? barRich(pct) : barPlain(pct);
+  const pctStr = rich ? `${colorFor(pct)}${pct}%${C.reset}` : `${pct}%`;
+  const durStr = dur ? ` ${rich ? C.dim : ''}(${dur})${rich ? C.reset : ''}` : '';
+  return `${label}:${bar}${rich ? ' ' : ''}${pctStr}${durStr}`;
+}
 
 function readStdin() {
   return new Promise(res => {
@@ -199,8 +216,8 @@ async function main() {
   if (haveLimits) {
     const tag = limits.level ? `GLM(${limits.level})` : 'GLM';
     const parts = [];
-    if (limits.fivePct != null) parts.push(rich ? `5h:${barRich(limits.fivePct)} ${colorFor(limits.fivePct)}${limits.fivePct}%${C.reset}` : `5h:${barPlain(limits.fivePct)}${limits.fivePct}%`);
-    if (limits.weekPct  != null) parts.push(rich ? `7d:${barRich(limits.weekPct)} ${colorFor(limits.weekPct)}${limits.weekPct}%${C.reset}` : `7d:${barPlain(limits.weekPct)}${limits.weekPct}%`);
+    if (limits.fivePct != null) parts.push(win('5h', limits.fivePct, fmtDuration((limits.fiveReset || 0) - now), rich));
+    if (limits.weekPct  != null) parts.push(win('7d',  limits.weekPct, fmtDuration((limits.weekReset || 0) - now), rich));
     segs.push((rich ? `${C.cyan}🤖 ${tag}${C.reset} ` : `${tag} `) + parts.join(rich ? ` ${C.dim}·${C.reset} ` : ' | '));
   } else if (!getAuth().token) {
     segs.push(rich ? `${C.dim}GLM:未配置 token${C.reset}` : 'GLM:未配置token');
